@@ -46,9 +46,9 @@ export const DEFAULT_MANIFEST: ManifestData = {
   name: "我的 PWA 漸進式網頁應用",
   short_name: "PWA App",
   description: "提供流暢如同原生體驗的現代 PWA 應用程式",
-  start_url: "/pwa/",
-  scope: "/pwa/",
-  id: "/pwa/",
+  start_url: "/",
+  scope: "/",
+  id: "/",
   display: "standalone",
   orientation: "any",
   theme_color: "#3b82f6",
@@ -57,25 +57,25 @@ export const DEFAULT_MANIFEST: ManifestData = {
   dir: "auto",
   icons: [
     {
-      src: "/pwa/icon-192x192.png",
+      src: "/icon-192x192.png",
       sizes: "192x192",
       type: "image/png",
       purpose: "any",
     },
     {
-      src: "/pwa/icon-512x512.png",
+      src: "/icon-512x512.png",
       sizes: "512x512",
       type: "image/png",
       purpose: "any",
     },
     {
-      src: "/pwa/icon-maskable-192x192.png",
+      src: "/icon-maskable-192x192.png",
       sizes: "192x192",
       type: "image/png",
       purpose: "maskable",
     },
     {
-      src: "/pwa/icon-maskable-512x512.png",
+      src: "/icon-maskable-512x512.png",
       sizes: "512x512",
       type: "image/png",
       purpose: "maskable",
@@ -86,10 +86,10 @@ export const DEFAULT_MANIFEST: ManifestData = {
       name: "首頁",
       short_name: "首頁",
       description: "快速返回首頁",
-      url: "/pwa/",
+      url: "/",
       icons: [
         {
-          src: "/pwa/icon-192x192.png",
+          src: "/icon-192x192.png",
           sizes: "192x192",
           type: "image/png",
         },
@@ -98,18 +98,18 @@ export const DEFAULT_MANIFEST: ManifestData = {
   ],
   screenshots: [
     {
-      src: "/pwa/screenshot-wide.png",
+      src: "/screenshot-wide.png",
       sizes: "1280x720",
       type: "image/png",
       form_factor: "wide",
-      label: "PWATools 桌面工作檯",
+      label: "桌面版應用畫面",
     },
     {
-      src: "/pwa/screenshot-narrow.png",
+      src: "/screenshot-narrow.png",
       sizes: "750x1334",
       type: "image/png",
       form_factor: "narrow",
-      label: "PWATools 行動裝置介面",
+      label: "行動裝置應用畫面",
     },
   ],
 };
@@ -153,22 +153,55 @@ export const SAMPLE_PRESETS: { label: string; data: Partial<ManifestData> }[] = 
   },
 ];
 
+export function detectImageType(src?: string): string {
+  if (!src) return "image/png";
+  const cleanSrc = src.split("?")[0].split("#")[0].trim().toLowerCase();
+
+  if (cleanSrc.startsWith("data:image/")) {
+    const match = cleanSrc.match(/^data:(image\/[a-zA-Z0-9.+_-]+)/);
+    if (match) return match[1];
+  }
+
+  if (cleanSrc.endsWith(".jpeg") || cleanSrc.endsWith(".jpg")) {
+    return "image/jpeg";
+  }
+  if (cleanSrc.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (cleanSrc.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  if (cleanSrc.endsWith(".gif")) {
+    return "image/gif";
+  }
+  if (cleanSrc.endsWith(".avif")) {
+    return "image/avif";
+  }
+  if (cleanSrc.endsWith(".ico")) {
+    return "image/x-icon";
+  }
+  return "image/png";
+}
+
 export function formatManifestJson(manifest: ManifestData): string {
   // 過濾掉空值或未設定項，產出最標準的 manifest JSON
   const output: Record<string, unknown> = {
     name: manifest.name,
     short_name: manifest.short_name,
     description: manifest.description || undefined,
-    start_url: manifest.start_url || "/pwa/",
-    scope: manifest.scope || "/pwa/",
-    id: manifest.id || "/pwa/",
+    start_url: manifest.start_url || "/",
+    scope: manifest.scope || "/",
+    id: manifest.id || "/",
     display: manifest.display,
     orientation: manifest.orientation,
     theme_color: manifest.theme_color,
     background_color: manifest.background_color,
     lang: manifest.lang || undefined,
     dir: manifest.dir || undefined,
-    icons: manifest.icons,
+    icons: manifest.icons.map((icon) => ({
+      ...icon,
+      type: detectImageType(icon.src),
+    })),
   };
 
   if (manifest.shortcuts && manifest.shortcuts.length > 0) {
@@ -182,7 +215,12 @@ export function formatManifestJson(manifest: ManifestData): string {
         if (s.short_name) item.short_name = s.short_name;
         if (s.description) item.description = s.description;
         if (s.icons && s.icons.length > 0) {
-          const validIcons = s.icons.filter((ic) => ic.src && ic.src.trim() !== "");
+          const validIcons = s.icons
+            .filter((ic) => ic.src && ic.src.trim() !== "")
+            .map((ic) => ({
+              ...ic,
+              type: detectImageType(ic.src),
+            }));
           if (validIcons.length > 0) item.icons = validIcons;
         }
         return item;
@@ -193,7 +231,12 @@ export function formatManifestJson(manifest: ManifestData): string {
   }
 
   if (manifest.screenshots && manifest.screenshots.length > 0) {
-    const validScreenshots = manifest.screenshots.filter((sc) => sc.src && sc.src.trim() !== "");
+    const validScreenshots = manifest.screenshots
+      .filter((sc) => sc.src && sc.src.trim() !== "")
+      .map((sc) => ({
+        ...sc,
+        type: detectImageType(sc.src),
+      }));
     if (validScreenshots.length > 0) {
       output.screenshots = validScreenshots;
     }

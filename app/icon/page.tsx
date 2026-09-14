@@ -66,6 +66,7 @@ export default function IconPage() {
     const [isDragging, setIsDragging] = useState(false);
     const [showSafeArea, setShowSafeArea] = useState(true);
     const [previewBackdrop, setPreviewBackdrop] = useState<"transparent" | "white" | "black">("transparent");
+    const [autoMaskableSafePadding, setAutoMaskableSafePadding] = useState(true);
 
     // 生成狀態
     const [generatedFiles, setGeneratedFiles] = useState<GeneratedIconFile[] | null>(null);
@@ -159,7 +160,7 @@ export default function IconPage() {
             ctx.restore();
         }
 
-        // 3. 安全區域輔助線 (80% 區域)
+        // 3. 安全區域輔助線 (80% W3C 與 70% Android 推薦區域)
         if (showSafeArea) {
             drawSafeAreaOverlay(ctx, size);
         }
@@ -218,17 +219,24 @@ export default function IconPage() {
                 iconBgColor,
                 isTransparentIconBg,
                 roundRadiusRatio: radiusRatio,
+                autoMaskableSafePadding,
             });
             setGeneratedFiles(files);
 
             // 將生成的 512x512 圖標預覽與背景色彩保存到 localStorage，供「資訊清單 (/manifest)」頁面自動同步帶入
             try {
                 const preview512 = files.find((f) => f.name.includes("512"))?.previewUrl || files[0]?.previewUrl;
-                if (preview512) {
+                let persistentUrl = preview512;
+                if (mainCanvasRef.current) {
+                    try {
+                        persistentUrl = mainCanvasRef.current.toDataURL("image/png");
+                    } catch { }
+                }
+                if (persistentUrl) {
                     localStorage.setItem(
                         "pwa_generated_icon_data",
                         JSON.stringify({
-                            previewUrl: preview512,
+                            previewUrl: persistentUrl,
                             iconBgColor: isTransparentIconBg ? "#ffffff" : iconBgColor,
                             themeColor: isTransparentIconBg ? "#ffffff" : iconBgColor,
                             shape: selectedShape,

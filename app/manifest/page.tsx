@@ -19,6 +19,7 @@ import {
     ManifestScreenshot,
     formatManifestJson,
     formatHtmlHeadSnippet,
+    detectImageType,
 } from "./manifest-types";
 import {
     RotateCcw,
@@ -40,6 +41,7 @@ import {
     Minus,
     X,
     Image as ImageIcon,
+    Upload,
 } from "lucide-react";
 
 const PRESET_COLORS = [
@@ -52,14 +54,21 @@ const PRESET_COLORS = [
     { label: "簡約白", value: "#ffffff" },
 ];
 
+// 預設內建 PWA 圖標（SVG Data URL，無任何網路或路徑相依，100% 保證永不破圖）
+const DEFAULT_PWA_ICON = `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNjNjAwNWMiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1nbG9iZS1jb2RlIj48cGF0aCBkPSJNMTUuNSAxMCAxMyA3LjUgMTUuNSA1Ii8+PHBhdGggZD0iTTE1Ljg2MSAxNEExNC41IDE0LjUgMCAwMTEyIDIyYTE0LjQ4IDE0LjQ4IDAgMDEwLTIwIDEwIDEwIDAgMTA5Ljg4OCAxMS41Ii8+PHBhdGggZD0iTTE5LjUgNSAyMiA3LjUgMTkuNSAxMCIvPjxwYXRoIGQ9Ik0yIDEyaDguNSIvPjwvc3ZnPg==`;
+
 export default function ManifestPage() {
     const [manifest, setManifest] = useState<ManifestData>(DEFAULT_MANIFEST);
     const [simulatorTab, setSimulatorTab] = useState<"home" | "splash" | "window">("home");
     const [codeTab, setCodeTab] = useState<"manifest" | "html">("manifest");
     const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
-    const [previewIconUrl, setPreviewIconUrl] = useState<string>("/pwa/example.svg");
+    const [iconBasePath, setIconBasePath] = useState<string>("/");
+    const [previewIconUrl, setPreviewIconUrl] = useState<string>(DEFAULT_PWA_ICON);
     const [syncedFromIcon, setSyncedFromIcon] = useState(false);
     const [showShortcutsMenu, setShowShortcutsMenu] = useState(false);
+    const [devicePlatform, setDevicePlatform] = useState<"ios" | "android">("ios");
+    const [uploadedScreenshotPreviews, setUploadedScreenshotPreviews] = useState<Record<number, string>>({});
+    const [uploadedShortcutPreviews, setUploadedShortcutPreviews] = useState<Record<number, string>>({});
 
     const themeColorInputRef = useRef<HTMLInputElement>(null);
     const bgColorInputRef = useRef<HTMLInputElement>(null);
@@ -71,7 +80,15 @@ export default function ManifestPage() {
             if (saved) {
                 const parsed = JSON.parse(saved);
                 if (parsed.previewUrl) {
-                    setPreviewIconUrl(parsed.previewUrl);
+                    if (parsed.previewUrl.startsWith("blob:")) {
+                        // Blob URL 可能因跨分頁/重整而失效，先進行可用性測試
+                        const testImg = new window.Image();
+                        testImg.onload = () => setPreviewIconUrl(parsed.previewUrl);
+                        testImg.onerror = () => setPreviewIconUrl(DEFAULT_PWA_ICON);
+                        testImg.src = parsed.previewUrl;
+                    } else {
+                        setPreviewIconUrl(parsed.previewUrl);
+                    }
                 }
                 if (parsed.iconBgColor) {
                     setManifest((prev) => ({
@@ -92,9 +109,51 @@ export default function ManifestPage() {
         setManifest((prev) => ({ ...prev, [key]: value }));
     };
 
+    // 批次更新圖標存放根目錄 (Base Path)
+    const handleUpdateIconBasePath = (newBase: string) => {
+        setIconBasePath(newBase);
+        let prefix = newBase.trim();
+        if (prefix && !prefix.endsWith("/") && !prefix.includes(".")) {
+            prefix += "/";
+        }
+        const updatedIcons = manifest.icons.map((icon) => {
+            const parts = icon.src.split("/");
+            const fileName = parts[parts.length - 1] || "icon.png";
+            const newSrc = `${prefix}${fileName}`;
+            return {
+                ...icon,
+                src: newSrc,
+                type: detectImageType(newSrc),
+            };
+        });
+        updateField("icons", updatedIcons);
+
+        // 同步更新捷徑中的圖標路徑
+        if (manifest.shortcuts && manifest.shortcuts.length > 0) {
+            const updatedShortcuts = manifest.shortcuts.map((sc) => {
+                if (!sc.icons || sc.icons.length === 0) return sc;
+                return {
+                    ...sc,
+                    icons: sc.icons.map((ic) => {
+                        const parts = ic.src.split("/");
+                        const fileName = parts[parts.length - 1] || "icon-192x192.png";
+                        const newSrc = `${prefix}${fileName}`;
+                        return {
+                            ...ic,
+                            src: newSrc,
+                            type: detectImageType(newSrc),
+                        };
+                    }),
+                };
+            });
+            updateField("shortcuts", updatedShortcuts);
+        }
+    };
+
     // 重設回初始預設值
     const handleReset = () => {
         setManifest(DEFAULT_MANIFEST);
+        setIconBasePath("/");
         setPreviewIconUrl("/pwa/example.svg");
         setSyncedFromIcon(false);
     };
@@ -118,9 +177,10 @@ export default function ManifestPage() {
         URL.revokeObjectURL(url);
     };
 
-    // 新增捷徑項目 (包含預設圖標規格)
+    // 新增捷徑項目 (包含預設圖標規格與自動辨識格式)
     const handleAddShortcut = () => {
         const num = manifest.shortcuts.length + 1;
+        const iconSrc = "/icon-192x192.png";
         const newShortcut = {
             name: `捷徑 ${num}`,
             short_name: `捷徑 ${num}`,
@@ -128,9 +188,9 @@ export default function ManifestPage() {
             url: `/?action=shortcut_${num}`,
             icons: [
                 {
-                    src: "/icon-192x192.png",
+                    src: iconSrc,
                     sizes: "192x192",
-                    type: "image/png",
+                    type: detectImageType(iconSrc),
                 },
             ],
         };
@@ -152,32 +212,85 @@ export default function ManifestPage() {
         updateField("shortcuts", updated);
     };
 
-    // 更新捷徑的圖標路徑
+    // 更新捷徑的圖標路徑 (自動辨識圖片格式，保留既有尺寸)
     const handleUpdateShortcutIcon = (index: number, iconSrc: string) => {
         const updated = [...manifest.shortcuts];
         const trimmed = iconSrc.trim();
+        const currentSizes = updated[index]?.icons?.[0]?.sizes || "192x192";
         updated[index] = {
             ...updated[index],
             icons: trimmed
                 ? [
-                      {
-                          src: trimmed,
-                          sizes: "192x192",
-                          type: "image/png",
-                      },
-                  ]
+                    {
+                        src: trimmed,
+                        sizes: currentSizes,
+                        type: detectImageType(trimmed),
+                    },
+                ]
                 : [],
         };
         updateField("shortcuts", updated);
     };
 
-    // 新增螢幕截圖項目
+    // 更新捷徑圖標尺寸規格 (sizes)
+    const handleUpdateShortcutIconSizes = (index: number, sizes: string) => {
+        const updated = [...manifest.shortcuts];
+        const currentIcon = updated[index]?.icons?.[0] || {
+            src: "/icon-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+        };
+        updated[index] = {
+            ...updated[index],
+            icons: [
+                {
+                    ...currentIcon,
+                    sizes: sizes,
+                },
+            ],
+        };
+        updateField("shortcuts", updated);
+    };
+
+    // 點擊上傳捷徑專屬圖標：自動辨識檔案名稱與原始尺寸
+    const handleUploadShortcutIcon = (index: number, file: File) => {
+        if (!file || !file.type.startsWith("image/")) return;
+
+        const objectUrl = URL.createObjectURL(file);
+        const img = new window.Image();
+        img.onload = () => {
+            const fileName = `/${file.name}`;
+            const fileType = file.type || detectImageType(file.name);
+            const updated = [...manifest.shortcuts];
+            if (updated[index]) {
+                updated[index] = {
+                    ...updated[index],
+                    icons: [
+                        {
+                            src: fileName,
+                            sizes: `${img.naturalWidth}x${img.naturalHeight}`,
+                            type: fileType,
+                        },
+                    ],
+                };
+                setUploadedShortcutPreviews((prev) => ({
+                    ...prev,
+                    [index]: objectUrl,
+                }));
+                updateField("shortcuts", updated);
+            }
+        };
+        img.src = objectUrl;
+    };
+
+    // 新增螢幕截圖項目 (自動辨識圖片格式)
     const handleAddScreenshot = () => {
         const isWide = ((manifest.screenshots?.length || 0) % 2) === 0;
+        const src = isWide ? "/screenshot-wide.png" : "/screenshot-narrow.png";
         const newScreenshot: ManifestScreenshot = {
-            src: isWide ? "/pwa/screenshot-wide.png" : "/pwa/screenshot-narrow.png",
+            src,
             sizes: isWide ? "1280x720" : "750x1334",
-            type: "image/png",
+            type: detectImageType(src),
             form_factor: isWide ? "wide" : "narrow",
             label: isWide ? "桌面版應用畫面" : "行動裝置應用畫面",
         };
@@ -192,15 +305,56 @@ export default function ManifestPage() {
         );
     };
 
-    // 更新螢幕截圖欄位
+    // 更新螢幕截圖欄位 (更新路徑時自動辨識圖片格式)
     const handleUpdateScreenshot = <K extends keyof ManifestScreenshot>(
         index: number,
         key: K,
         val: ManifestScreenshot[K]
     ) => {
         const updated = [...(manifest.screenshots || [])];
-        updated[index] = { ...updated[index], [key]: val };
+        if (key === "src" && typeof val === "string") {
+            updated[index] = {
+                ...updated[index],
+                src: val,
+                type: detectImageType(val),
+            };
+        } else {
+            updated[index] = { ...updated[index], [key]: val };
+        }
         updateField("screenshots", updated);
+    };
+
+    // 點擊上傳截圖：自動讀取真實檔案名稱、寬高尺寸 (sizes)、版型 (wide/narrow) 與 MIME 格式
+    const handleUploadScreenshotFile = (index: number, file: File) => {
+        if (!file || !file.type.startsWith("image/")) return;
+
+        const objectUrl = URL.createObjectURL(file);
+        const img = new window.Image();
+        img.onload = () => {
+            const width = img.naturalWidth;
+            const height = img.naturalHeight;
+            const isWide = width >= height;
+            const fileName = `/${file.name}`;
+            const fileType = file.type || detectImageType(file.name);
+
+            const updated = [...(manifest.screenshots || [])];
+            if (updated[index]) {
+                updated[index] = {
+                    ...updated[index],
+                    src: fileName,
+                    sizes: `${width}x${height}`,
+                    type: fileType,
+                    form_factor: isWide ? "wide" : "narrow",
+                    label: updated[index].label || (isWide ? "桌面版應用畫面" : "行動裝置應用畫面"),
+                };
+                setUploadedScreenshotPreviews((prev) => ({
+                    ...prev,
+                    [index]: objectUrl,
+                }));
+                updateField("screenshots", updated);
+            }
+        };
+        img.src = objectUrl;
     };
 
     const resolvePreviewPath = (src?: string) => {
@@ -258,18 +412,37 @@ export default function ManifestPage() {
 
                         {/* 手機主畫面時的捷徑輔助切換列 */}
                         {simulatorTab === "home" && (
-                            <div className="w-full flex items-center justify-between px-1 text-xs">
-                                <span className="text-[11px] text-muted-foreground">
-                                    長按或右鍵圖標亦可呼出捷徑
-                                </span>
+                            <div className="w-full flex items-center justify-between px-1 text-xs gap-2">
+                                <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/50 text-[11px]">
+                                    <button
+                                        type="button"
+                                        onClick={() => setDevicePlatform("ios")}
+                                        className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${devicePlatform === "ios"
+                                            ? "bg-background font-semibold text-foreground shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                    >
+                                        iOS 圓角
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setDevicePlatform("android")}
+                                        className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${devicePlatform === "android"
+                                            ? "bg-background font-semibold text-foreground shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                            }`}
+                                    >
+                                        Android 圓形
+                                    </button>
+                                </div>
                                 <Button
                                     variant={showShortcutsMenu ? "secondary" : "outline"}
                                     size="sm"
                                     onClick={() => setShowShortcutsMenu(!showShortcutsMenu)}
-                                    className="cursor-pointer text-[11px] h-6 px-2 gap-1 rounded-full"
+                                    className="cursor-pointer text-[11px] h-6 px-2 gap-1 rounded-full shrink-0"
                                 >
                                     <Plus className="h-3 w-3 text-primary" />
-                                    {showShortcutsMenu ? "收合捷徑選單" : `預覽捷徑選單 (${manifest.shortcuts.length})`}
+                                    {showShortcutsMenu ? "收合捷徑" : `捷徑 (${manifest.shortcuts.length})`}
                                 </Button>
                             </div>
                         )}
@@ -282,16 +455,19 @@ export default function ManifestPage() {
                                 <div className="w-full max-w-[280px] aspect-[9/17] rounded-[36px] border-4 border-foreground/15 shadow-xl flex flex-col justify-between relative overflow-hidden select-none bg-background">
                                     {/* Layer 1: 手機桌面背景與圖標 (Home Screen) */}
                                     <div
-                                        className={`absolute inset-0 p-3.5 flex flex-col justify-between bg-gradient-to-b from-sky-400/20 via-indigo-500/15 to-purple-600/25 transition-all duration-300 ease-out ${
-                                            simulatorTab === "home"
-                                                ? "opacity-100 scale-100 pointer-events-auto"
-                                                : "opacity-0 scale-105 pointer-events-none"
-                                        }`}
+                                        className={`absolute inset-0 p-3.5 flex flex-col justify-between bg-gradient-to-b from-sky-400/20 via-indigo-500/15 to-purple-600/25 transition-all duration-300 ease-out ${simulatorTab === "home"
+                                            ? "opacity-100 scale-100 pointer-events-auto"
+                                            : "opacity-0 scale-105 pointer-events-none"
+                                            }`}
                                     >
                                         {/* 頂部瀏海 / 動態島 */}
                                         <div className="flex justify-between items-center px-1 pt-1 text-[10px] font-medium text-foreground/70">
                                             <span>09:41</span>
-                                            <div className="w-16 h-3.5 bg-foreground/20 rounded-full mx-auto" />
+                                            {devicePlatform === "android" ? (
+                                                <div className="w-2.5 h-2.5 bg-foreground/30 rounded-full mx-auto" />
+                                            ) : (
+                                                <div className="w-16 h-3.5 bg-foreground/20 rounded-full mx-auto" />
+                                            )}
                                             <div className="flex gap-1 items-center">
                                                 <div className="w-2.5 h-2 bg-foreground/60 rounded-xs" />
                                             </div>
@@ -301,13 +477,13 @@ export default function ManifestPage() {
                                         <div className="grid grid-cols-4 gap-3.5 px-1 py-6 relative">
                                             {/* 假應用 1 */}
                                             <div className="flex flex-col items-center gap-1 opacity-50">
-                                                <div className="w-12 h-12 rounded-xl bg-muted/60 border border-border/40 shadow-xs" />
+                                                <div className={`w-12 h-12 ${devicePlatform === "android" ? "rounded-full" : "rounded-xl"} bg-muted/60 border border-border/40 shadow-xs`} />
                                                 <span className="text-[10px] text-foreground/80">照片</span>
                                             </div>
 
                                             {/* 假應用 2 */}
                                             <div className="flex flex-col items-center gap-1 opacity-50">
-                                                <div className="w-12 h-12 rounded-xl bg-muted/60 border border-border/40 shadow-xs" />
+                                                <div className={`w-12 h-12 ${devicePlatform === "android" ? "rounded-full" : "rounded-xl"} bg-muted/60 border border-border/40 shadow-xs`} />
                                                 <span className="text-[10px] text-foreground/80">設定</span>
                                             </div>
 
@@ -322,14 +498,20 @@ export default function ManifestPage() {
                                                 className="flex flex-col items-center gap-1 transform transition-all hover:scale-110 active:scale-90 cursor-pointer group focus:outline-none relative"
                                                 title="點擊預覽開機畫面，右鍵可呼出長按捷徑選單"
                                             >
-                                                <div className="relative w-12 h-12 rounded-xl border border-border/80 shadow-md overflow-hidden bg-background flex items-center justify-center ring-2 ring-primary/50 group-hover:ring-primary group-hover:shadow-lg transition-all">
+                                                <div className={`relative w-12 h-12 ${devicePlatform === "android" ? "rounded-full" : "rounded-xl"} border border-border/80 shadow-md overflow-hidden bg-background flex items-center justify-center ring-2 ring-primary/50 group-hover:ring-primary group-hover:shadow-lg transition-all`}>
                                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                                     <img
                                                         src={previewIconUrl}
-                                                        alt={manifest.name}
-                                                        className="w-10 h-10 object-contain"
+                                                        alt=""
+                                                        className={`${devicePlatform === "android" ? "w-9 h-9" : "w-10 h-10"} object-contain transition-all`}
+                                                        onError={(e) => {
+                                                            const target = e.target as HTMLImageElement;
+                                                            if (target.src !== DEFAULT_PWA_ICON) {
+                                                                target.src = DEFAULT_PWA_ICON;
+                                                            }
+                                                        }}
                                                     />
-                                                    <span className="absolute bottom-0 right-0 bg-primary text-primary-foreground text-[8px] font-bold px-1 rounded-tl-md leading-tight">
+                                                    <span className={`absolute bottom-0 right-0 bg-primary text-primary-foreground text-[8px] font-bold px-1 ${devicePlatform === "android" ? "rounded-full scale-75" : "rounded-tl-md"} leading-tight`}>
                                                         PWA
                                                     </span>
                                                 </div>
@@ -340,7 +522,7 @@ export default function ManifestPage() {
 
                                             {/* 假應用 3 */}
                                             <div className="flex flex-col items-center gap-1 opacity-50">
-                                                <div className="w-12 h-12 rounded-xl bg-muted/60 border border-border/40 shadow-xs" />
+                                                <div className={`w-12 h-12 ${devicePlatform === "android" ? "rounded-full" : "rounded-xl"} bg-muted/60 border border-border/40 shadow-xs`} />
                                                 <span className="text-[10px] text-foreground/80">地圖</span>
                                             </div>
                                         </div>
@@ -354,8 +536,14 @@ export default function ManifestPage() {
                                                             {/* eslint-disable-next-line @next/next/no-img-element */}
                                                             <img
                                                                 src={previewIconUrl}
-                                                                alt="icon"
+                                                                alt=""
                                                                 className="w-full h-full object-contain"
+                                                                onError={(e) => {
+                                                                    const target = e.target as HTMLImageElement;
+                                                                    if (target.src !== DEFAULT_PWA_ICON) {
+                                                                        target.src = DEFAULT_PWA_ICON;
+                                                                    }
+                                                                }}
                                                             />
                                                         </div>
                                                         <span className="text-[10px] font-bold text-foreground truncate">
@@ -387,16 +575,16 @@ export default function ManifestPage() {
                                                                 className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted/70 transition-colors cursor-pointer group"
                                                             >
                                                                 <div className="w-6 h-6 rounded-md bg-muted/70 flex items-center justify-center overflow-hidden shrink-0 border border-border/50">
-                                                                    {sc.icons && sc.icons[0]?.src ? (
+                                                                    {uploadedShortcutPreviews[i] || sc.icons?.[0]?.src ? (
                                                                         // eslint-disable-next-line @next/next/no-img-element
                                                                         <img
-                                                                            src={resolvePreviewPath(sc.icons[0].src)}
-                                                                            alt={sc.name}
+                                                                            src={uploadedShortcutPreviews[i] || resolvePreviewPath(sc.icons?.[0]?.src)}
+                                                                            alt=""
                                                                             className="w-full h-full object-contain"
                                                                             onError={(e) => {
                                                                                 const target = e.target as HTMLImageElement;
-                                                                                if (target.src !== previewIconUrl) {
-                                                                                    target.src = previewIconUrl;
+                                                                                if (target.src !== DEFAULT_PWA_ICON) {
+                                                                                    target.src = DEFAULT_PWA_ICON;
                                                                                 }
                                                                             }}
                                                                         />
@@ -430,11 +618,10 @@ export default function ManifestPage() {
 
                                     {/* Layer 2: 開機載入畫面 (Splash Screen) */}
                                     <div
-                                        className={`absolute inset-0 p-4 flex flex-col justify-between items-center transition-all duration-300 ease-out z-20 ${
-                                            simulatorTab === "splash"
-                                                ? "opacity-100 scale-100 pointer-events-auto"
-                                                : "opacity-0 scale-90 pointer-events-none"
-                                        }`}
+                                        className={`absolute inset-0 p-4 flex flex-col justify-between items-center transition-all duration-300 ease-out z-20 ${simulatorTab === "splash"
+                                            ? "opacity-100 scale-100 pointer-events-auto"
+                                            : "opacity-0 scale-90 pointer-events-none"
+                                            }`}
                                         style={{ backgroundColor: manifest.background_color }}
                                     >
                                         {/* 頂部狀態列 */}
@@ -449,8 +636,14 @@ export default function ManifestPage() {
                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
                                                     src={previewIconUrl}
-                                                    alt={manifest.name}
+                                                    alt=""
                                                     className="w-16 h-16 object-contain"
+                                                    onError={(e) => {
+                                                        const target = e.target as HTMLImageElement;
+                                                        if (target.src !== DEFAULT_PWA_ICON) {
+                                                            target.src = DEFAULT_PWA_ICON;
+                                                        }
+                                                    }}
                                                 />
                                             </div>
                                             <div className="text-center px-4">
@@ -490,8 +683,14 @@ export default function ManifestPage() {
                                             {/* eslint-disable-next-line @next/next/no-img-element */}
                                             <img
                                                 src={previewIconUrl}
-                                                alt={manifest.name}
+                                                alt=""
                                                 className="w-4 h-4 rounded-xs shrink-0 bg-background p-0.5"
+                                                onError={(e) => {
+                                                    const target = e.target as HTMLImageElement;
+                                                    if (target.src !== DEFAULT_PWA_ICON) {
+                                                        target.src = DEFAULT_PWA_ICON;
+                                                    }
+                                                }}
                                             />
                                             <span className="text-xs font-semibold truncate text-white drop-shadow-xs">
                                                 {manifest.name || "應用程式視窗"}
@@ -858,6 +1057,41 @@ export default function ManifestPage() {
                                 </span>
                             </div>
 
+                            {/* 圖標根目錄 (Base Path) 輸入欄位 */}
+                            <div className="p-3 rounded-xl bg-muted/20 border border-border/60 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                                        圖標存放根目錄 (Base Path)
+                                        <span className="text-[10px] text-muted-foreground font-normal">批次套用至以下所有圖標路徑</span>
+                                    </label>
+                                    <div className="flex items-center gap-1.5 text-[11px]">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleUpdateIconBasePath(manifest.scope || "/")}
+                                            className="text-primary hover:underline cursor-pointer"
+                                            title="套用目前作用域路徑"
+                                        >
+                                            同作用域 ({manifest.scope || "/"})
+                                        </button>
+                                        <span className="text-muted-foreground/40">|</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleUpdateIconBasePath("/")}
+                                            className="text-primary hover:underline cursor-pointer"
+                                            title="重設為根目錄 /"
+                                        >
+                                            預設 (/)
+                                        </button>
+                                    </div>
+                                </div>
+                                <Input
+                                    value={iconBasePath}
+                                    onChange={(e) => handleUpdateIconBasePath(e.target.value)}
+                                    placeholder="例如：/ 或 /time/ 或 /pwa/"
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+
                             <div className="border border-border/60 rounded-xl divide-y divide-border/50 overflow-hidden bg-background">
                                 {manifest.icons.map((icon, idx) => (
                                     <div key={idx} className="flex items-center justify-between px-3.5 py-2.5 hover:bg-muted/20 gap-3">
@@ -953,44 +1187,98 @@ export default function ManifestPage() {
                                             </div>
 
                                             {/* 捷徑圖標 (Shortcut Icon) */}
-                                            <div className="space-y-1 pt-1 border-t border-border/40">
+                                            <div className="space-y-1.5 pt-1.5 border-t border-border/40">
                                                 <div className="flex items-center justify-between">
-                                                    <span className="text-[11px] text-muted-foreground font-medium">
-                                                        捷徑專屬圖標 (Icon 路徑 / 建議 192x192)
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleUpdateShortcutIcon(index, previewIconUrl)}
-                                                        className="text-[10px] text-primary hover:underline cursor-pointer"
-                                                    >
-                                                        套用當前應用圖標
-                                                    </button>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-8 h-8 rounded-lg border border-border/60 bg-background flex items-center justify-center overflow-hidden shrink-0">
-                                                        {shortcut.icons && shortcut.icons[0]?.src ? (
-                                                            // eslint-disable-next-line @next/next/no-img-element
-                                                            <img
-                                                                src={resolvePreviewPath(shortcut.icons[0].src)}
-                                                                alt="icon preview"
-                                                                className="w-full h-full object-contain"
-                                                                onError={(e) => {
-                                                                    const target = e.target as HTMLImageElement;
-                                                                    if (target.src !== previewIconUrl) {
-                                                                        target.src = previewIconUrl;
-                                                                    }
-                                                                }}
-                                                            />
-                                                        ) : (
-                                                            <Compass className="h-4 w-4 text-muted-foreground/50" />
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[11px] text-muted-foreground font-medium">
+                                                            捷徑專屬圖標 (Icon 路徑與尺寸規格)
+                                                        </span>
+                                                        {shortcut.icons?.[0]?.src && (
+                                                            <span className="text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded uppercase">
+                                                                {detectImageType(shortcut.icons[0].src)}
+                                                            </span>
                                                         )}
                                                     </div>
-                                                    <Input
-                                                        value={shortcut.icons?.[0]?.src || ""}
-                                                        onChange={(e) => handleUpdateShortcutIcon(index, e.target.value)}
-                                                        placeholder="/icon-192x192.png 或圖形 URL"
-                                                        className="h-8 text-xs font-mono flex-1"
-                                                    />
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => document.getElementById(`shortcut-icon-file-${index}`)?.click()}
+                                                            className="text-[10px] text-primary hover:underline cursor-pointer flex items-center gap-0.5 font-medium"
+                                                            title="點擊上傳自訂捷徑圖標 (自動帶入路徑與尺寸)"
+                                                        >
+                                                            <Upload className="h-2.5 w-2.5" />
+                                                            上傳圖檔
+                                                        </button>
+                                                        <span className="text-muted-foreground/30 text-[10px]">|</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateShortcutIcon(index, previewIconUrl)}
+                                                            className="text-[10px] text-muted-foreground hover:text-primary hover:underline cursor-pointer"
+                                                        >
+                                                            套用應用圖標
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* 隱藏的捷徑檔案選擇器 */}
+                                                <input
+                                                    type="file"
+                                                    id={`shortcut-icon-file-${index}`}
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                        if (e.target.files?.[0]) {
+                                                            handleUploadShortcutIcon(index, e.target.files[0]);
+                                                        }
+                                                    }}
+                                                />
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                                                    {/* 圖標預覽與路徑 */}
+                                                    <div className="sm:col-span-8 flex items-center gap-2">
+                                                        <div
+                                                            onClick={() => document.getElementById(`shortcut-icon-file-${index}`)?.click()}
+                                                            title="點擊上傳專屬捷徑圖標 (自動帶入路徑與解析度尺寸)"
+                                                            className="w-8 h-8 rounded-lg border border-border/60 hover:border-primary hover:bg-muted/40 bg-background flex items-center justify-center overflow-hidden shrink-0 cursor-pointer relative group transition-all"
+                                                        >
+                                                            {uploadedShortcutPreviews[index] || (shortcut.icons && shortcut.icons[0]?.src) ? (
+                                                                // eslint-disable-next-line @next/next/no-img-element
+                                                                <img
+                                                                    src={uploadedShortcutPreviews[index] || resolvePreviewPath(shortcut.icons?.[0]?.src)}
+                                                                    alt=""
+                                                                    className="w-full h-full object-contain"
+                                                                    onError={(e) => {
+                                                                        const target = e.target as HTMLImageElement;
+                                                                        if (target.src !== DEFAULT_PWA_ICON) {
+                                                                            target.src = DEFAULT_PWA_ICON;
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <Compass className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
+                                                            )}
+                                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                                                <Upload className="h-3 w-3" />
+                                                            </div>
+                                                        </div>
+                                                        <Input
+                                                            value={shortcut.icons?.[0]?.src || ""}
+                                                            onChange={(e) => handleUpdateShortcutIcon(index, e.target.value)}
+                                                            placeholder="/icon-192x192.png 或圖形 URL"
+                                                            className="h-8 text-xs font-mono flex-1"
+                                                        />
+                                                    </div>
+
+                                                    {/* 尺寸欄位 */}
+                                                    <div className="sm:col-span-4 flex items-center gap-1.5">
+                                                        <span className="text-[11px] text-muted-foreground font-medium shrink-0">尺寸 (sizes)</span>
+                                                        <Input
+                                                            value={shortcut.icons?.[0]?.sizes || "192x192"}
+                                                            onChange={(e) => handleUpdateShortcutIconSizes(index, e.target.value)}
+                                                            placeholder="例如：192x192"
+                                                            className="h-8 text-xs font-mono w-full"
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -1043,40 +1331,155 @@ export default function ManifestPage() {
                                                         {screenshot.form_factor === "wide" ? "Desktop (wide)" : "Mobile (narrow)"}
                                                     </span>
                                                 </span>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleRemoveScreenshot(index)}
-                                                    className="cursor-pointer h-6 px-1.5 text-muted-foreground hover:text-destructive"
-                                                    title="刪除此截圖"
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </Button>
+                                                <div className="flex items-center gap-1.5">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        type="button"
+                                                        onClick={() => document.getElementById(`screenshot-file-input-${index}`)?.click()}
+                                                        className="cursor-pointer h-6 px-2 text-[10px] gap-1 text-primary border-primary/30 bg-primary/5 hover:bg-primary/10"
+                                                        title="點擊上傳截圖，自動辨識並帶入檔名與尺寸"
+                                                    >
+                                                        <Upload className="h-3 w-3" />
+                                                        <span>上傳圖檔帶入</span>
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleRemoveScreenshot(index)}
+                                                        className="cursor-pointer h-6 px-1.5 text-muted-foreground hover:text-destructive"
+                                                        title="刪除此截圖"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </div>
                                             </div>
 
-                                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-start">
-                                                {/* 縮圖預覽 */}
-                                                <div className="sm:col-span-3 aspect-video rounded-lg border border-border/60 bg-background overflow-hidden flex items-center justify-center relative">
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={resolvePreviewPath(screenshot.src)}
-                                                        alt={screenshot.label || "Screenshot preview"}
-                                                        className="w-full h-full object-cover"
-                                                        onError={(e) => {
-                                                            (e.target as HTMLImageElement).src = previewIconUrl;
-                                                        }}
-                                                    />
+                                            {/* 隱藏的原生檔案選擇器 */}
+                                            <input
+                                                type="file"
+                                                id={`screenshot-file-input-${index}`}
+                                                accept="image/*"
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                    if (e.target.files?.[0]) {
+                                                        handleUploadScreenshotFile(index, e.target.files[0]);
+                                                    }
+                                                }}
+                                            />
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5 items-stretch">
+                                                {/* 版型示意圖 / 上傳預覽 (點擊可上傳並自動帶入檔名與解析度尺寸) */}
+                                                <div
+                                                    onClick={() => document.getElementById(`screenshot-file-input-${index}`)?.click()}
+                                                    onDragOver={(e) => e.preventDefault()}
+                                                    onDrop={(e) => {
+                                                        e.preventDefault();
+                                                        if (e.dataTransfer.files?.[0]) {
+                                                            handleUploadScreenshotFile(index, e.dataTransfer.files[0]);
+                                                        }
+                                                    }}
+                                                    title="點擊或拖曳上傳截圖，自動帶入檔名與尺寸規格"
+                                                    className="sm:col-span-4 rounded-xl border border-border/70 bg-muted/40 hover:bg-muted/60 hover:border-primary/50 p-2.5 flex flex-col justify-between select-none relative overflow-hidden transition-all cursor-pointer group"
+                                                >
+                                                    {uploadedScreenshotPreviews[index] ? (
+                                                        /* 已上傳真實圖片預覽 */
+                                                        <div className="w-full h-full min-h-[115px] flex flex-col justify-between">
+                                                            <div className="relative flex-1 aspect-video rounded-lg overflow-hidden bg-background/90 border border-border/50 flex items-center justify-center group-hover:brightness-95 transition-all">
+                                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                <img
+                                                                    src={uploadedScreenshotPreviews[index]}
+                                                                    alt={screenshot.label || "Uploaded preview"}
+                                                                    className="w-full h-full object-contain"
+                                                                />
+                                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1 text-xs font-medium">
+                                                                    <Upload className="h-4 w-4" />
+                                                                    <span>點擊更換圖檔</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono pt-1.5 border-t border-border/40 mt-1">
+                                                                <span className="text-emerald-600 dark:text-emerald-400 font-sans text-[9px] font-semibold flex items-center gap-1">
+                                                                    <Check className="h-3 w-3" />
+                                                                    {screenshot.form_factor === "wide" ? "16:9 寬版" : "9:16 直式"}
+                                                                </span>
+                                                                <span className="font-semibold text-foreground/80">{screenshot.sizes}</span>
+                                                            </div>
+                                                        </div>
+                                                    ) : screenshot.form_factor === "wide" ? (
+                                                        /* 桌面 (wide 16:9) 視窗示意圖 */
+                                                        <div className="w-full h-full min-h-[115px] flex flex-col justify-between">
+                                                            {/* 視窗頂部控制條 */}
+                                                            <div className="flex items-center gap-1 pb-1.5 border-b border-border/50">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400/80" />
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/80" />
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
+                                                                <div className="h-1.5 flex-1 rounded bg-background/80 mx-1.5" />
+                                                                <Monitor className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                                            </div>
+                                                            {/* 視窗內容線條示意 */}
+                                                            <div className="py-2 flex flex-col items-center justify-center gap-1">
+                                                                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground/85">
+                                                                    <Monitor className="h-3.5 w-3.5 text-primary" />
+                                                                    <span>Desktop 桌面示意</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1 text-[10px] text-primary bg-primary/10 group-hover:bg-primary/20 px-2 py-0.5 rounded-full transition-colors">
+                                                                    <Upload className="h-2.5 w-2.5" />
+                                                                    <span>點擊上傳帶入檔名與尺寸</span>
+                                                                </div>
+                                                            </div>
+                                                            {/* 底部比例規格 */}
+                                                            <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono pt-1 border-t border-border/40">
+                                                                <span className="bg-primary/10 text-primary px-1.5 py-0.2 rounded font-sans text-[9px] font-medium">16 : 9 寬版</span>
+                                                                <span>{screenshot.sizes || "1280×720"}</span>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        /* 手機 (narrow 9:16) 視窗示意圖 */
+                                                        <div className="w-full h-full min-h-[115px] flex flex-col justify-between items-center">
+                                                            {/* 迷你手機機身 */}
+                                                            <div className="w-20 h-[80px] rounded-lg border-2 border-border/80 bg-background/90 p-1 flex flex-col justify-between shadow-xs group-hover:border-primary/60 transition-colors">
+                                                                {/* 頂部聽筒 */}
+                                                                <div className="flex justify-center">
+                                                                    <div className="w-4 h-0.5 rounded-full bg-muted-foreground/40" />
+                                                                </div>
+                                                                {/* 螢幕骨架 */}
+                                                                <div className="flex flex-col items-center justify-center gap-0.5 my-auto">
+                                                                    <Smartphone className="h-3 w-3 text-primary" />
+                                                                    <span className="text-[8px] font-semibold text-primary flex items-center gap-0.5">
+                                                                        <Upload className="h-2 w-2" />
+                                                                        點擊上傳
+                                                                    </span>
+                                                                </div>
+                                                                {/* 底部 Home 鍵線條 */}
+                                                                <div className="flex justify-center">
+                                                                    <div className="w-5 h-0.5 rounded-full bg-muted-foreground/40" />
+                                                                </div>
+                                                            </div>
+                                                            {/* 底部比例規格 */}
+                                                            <div className="w-full flex items-center justify-between text-[10px] text-muted-foreground font-mono pt-1 mt-1 border-t border-border/40">
+                                                                <span className="bg-primary/10 text-primary px-1.5 py-0.2 rounded font-sans text-[9px] font-medium">9 : 16 直式</span>
+                                                                <span>{screenshot.sizes || "750×1334"}</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 {/* 參數輸入欄 */}
-                                                <div className="sm:col-span-9 space-y-2">
+                                                <div className="sm:col-span-8 space-y-2">
                                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                                         <div className="space-y-1">
-                                                            <span className="text-[11px] text-muted-foreground font-medium">圖片路徑 (src)</span>
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-[11px] text-muted-foreground font-medium">圖片路徑 (src)</span>
+                                                                {screenshot.src && (
+                                                                    <span className="text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded uppercase">
+                                                                        {detectImageType(screenshot.src)}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <Input
                                                                 value={screenshot.src}
                                                                 onChange={(e) => handleUpdateScreenshot(index, "src", e.target.value)}
-                                                                placeholder="/pwa/screenshot-wide.png"
+                                                                placeholder="/screenshot-wide.png"
                                                                 className="h-8 text-xs font-mono"
                                                             />
                                                         </div>

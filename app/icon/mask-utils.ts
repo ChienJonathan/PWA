@@ -152,6 +152,9 @@ export function drawCheckerboard(
 
 /**
  * 繪製 PWA Maskable Icon 安全區域（Safe Area）輔助線
+ * 包含：
+ * 1. 紅色虛線：W3C Maskable 80% 最大安全圓
+ * 2. 綠色虛線：Android Adaptive Icon 70% 核心視覺推薦圓（避免圓形裁切貼邊）
  */
 export function drawSafeAreaOverlay(
   ctx: CanvasRenderingContext2D,
@@ -160,25 +163,34 @@ export function drawSafeAreaOverlay(
   ctx.save();
   const cx = size / 2;
   const cy = size / 2;
-  const safeRadius = (size * 0.8) / 2;
 
+  // 1. W3C Maskable 最大安全邊界 (80% 直徑)
+  const safeRadius80 = (size * 0.8) / 2;
   ctx.strokeStyle = "rgba(239, 68, 68, 0.85)";
-  ctx.lineWidth = Math.max(2, size * 0.005);
+  ctx.lineWidth = Math.max(1.5, size * 0.004);
   ctx.setLineDash([8, 6]);
-
   ctx.beginPath();
-  ctx.arc(cx, cy, safeRadius, 0, Math.PI * 2);
+  ctx.arc(cx, cy, safeRadius80, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(239, 68, 68, 0.45)";
-  ctx.lineWidth = 1;
+  // 2. Android 核心視覺與圓形裁切推薦區 (70% 直徑)
+  const safeRadius70 = (size * 0.7) / 2;
+  ctx.strokeStyle = "rgba(16, 185, 129, 0.9)";
+  ctx.lineWidth = Math.max(1.5, size * 0.004);
   ctx.setLineDash([4, 4]);
-
   ctx.beginPath();
-  ctx.moveTo(cx, cy - safeRadius - 10);
-  ctx.lineTo(cx, cy + safeRadius + 10);
-  ctx.moveTo(cx - safeRadius - 10, cy);
-  ctx.lineTo(cx + safeRadius + 10, cy);
+  ctx.arc(cx, cy, safeRadius70, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 中心十字校準輔助線
+  ctx.strokeStyle = "rgba(239, 68, 68, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - safeRadius80 - 6);
+  ctx.lineTo(cx, cy + safeRadius80 + 6);
+  ctx.moveTo(cx - safeRadius80 - 6, cy);
+  ctx.lineTo(cx + safeRadius80 + 6, cy);
   ctx.stroke();
 
   ctx.restore();
@@ -218,6 +230,8 @@ export interface RenderIconOptions {
   iconBgColor: string;
   isTransparentIconBg: boolean;
   roundRadiusRatio?: number;
+  maskableScale?: number;
+  autoMaskableSafePadding?: boolean;
 }
 
 /**
@@ -357,6 +371,7 @@ export async function generateAllPwaIcons(
     name: string;
     size: number;
     purpose: string;
+    isMaskable?: boolean;
   }[] = [
     { name: "favicon-16x16.png", size: 16, purpose: "瀏覽器標籤頁小尺寸" },
     { name: "favicon-32x32.png", size: 32, purpose: "瀏覽器標籤頁標準尺寸" },
@@ -364,14 +379,30 @@ export async function generateAllPwaIcons(
     { name: "apple-touch-icon.png", size: 180, purpose: "iOS 桌面圖標 (180×180)" },
     { name: "icon-192x192.png", size: 192, purpose: "PWA 標準手機圖標 (192×192)" },
     { name: "icon-512x512.png", size: 512, purpose: "PWA 啟動與商店大圖 (512×512)" },
-    { name: "icon-maskable-192x192.png", size: 192, purpose: "PWA Maskable 自適應 (192×192)" },
-    { name: "icon-maskable-512x512.png", size: 512, purpose: "PWA Maskable 自適應 (512×512)" },
+    { name: "icon-maskable-192x192.png", size: 192, purpose: "PWA Maskable 自適應 (192×192)", isMaskable: true },
+    { name: "icon-maskable-512x512.png", size: 512, purpose: "PWA Maskable 自適應 (512×512)", isMaskable: true },
   ];
 
   const results: GeneratedIconFile[] = [];
 
   for (const t of tasks) {
-    const blob = await renderIconToBlob(image, t.size, options);
+    let renderOptions = options;
+    if (t.isMaskable) {
+      // W3C 與 Android 規範：Maskable 圖標必須為 Fullbleed（填滿整張畫布，不得預先切透明圓角）
+      // 且若未關閉自動留白，則縮放上限鎖定在 70%~72%（Android 核心安全區域），確保安卓系統裁切成圓形時周圍有充足的原生留白
+      const safeScale =
+        options.autoMaskableSafePadding === false
+          ? options.scale
+          : (options.maskableScale ?? (options.scale > 75 ? Math.round(options.scale * 0.72) : options.scale));
+
+      renderOptions = {
+        ...options,
+        shape: "Fullbleed",
+        scale: safeScale,
+      };
+    }
+
+    const blob = await renderIconToBlob(image, t.size, renderOptions);
     results.push({
       name: t.name,
       sizeDesc: `${t.size} × ${t.size}`,
