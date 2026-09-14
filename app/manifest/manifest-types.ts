@@ -84,8 +84,6 @@ export const DEFAULT_MANIFEST: ManifestData = {
   shortcuts: [
     {
       name: "首頁",
-      short_name: "首頁",
-      description: "快速返回首頁",
       url: "/",
       icons: [
         {
@@ -212,8 +210,6 @@ export function formatManifestJson(manifest: ManifestData): string {
           name: s.name,
           url: s.url,
         };
-        if (s.short_name) item.short_name = s.short_name;
-        if (s.description) item.description = s.description;
         if (s.icons && s.icons.length > 0) {
           const validIcons = s.icons
             .filter((ic) => ic.src && ic.src.trim() !== "")

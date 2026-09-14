@@ -183,8 +183,6 @@ export default function ManifestPage() {
         const iconSrc = "/icon-192x192.png";
         const newShortcut = {
             name: `捷徑 ${num}`,
-            short_name: `捷徑 ${num}`,
-            description: "快捷操作描述",
             url: `/?action=shortcut_${num}`,
             icons: [
                 {

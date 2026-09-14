@@ -41,8 +41,6 @@
     {
       "name": "圖標工具",
       "url": "/pwa/icon",
-      "short_name": "首頁",
-      "description": "快速返回首頁",
       "icons": [
         {
           "src": "/pwa/icon-icon-192x192.png",
@@ -54,8 +52,6 @@
     {
       "name": "資訊清單",
       "url": "/pwa/manifest",
-      "short_name": "捷徑 2",
-      "description": "快捷操作描述",
       "icons": [
         {
           "src": "/pwa/icon-manifest-192x192.png",
