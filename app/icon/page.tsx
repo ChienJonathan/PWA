@@ -7,12 +7,11 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 
 
 const items = [
-    { label: "Select a fruit", value: null },
-    { label: "Apple", value: "apple" },
-    { label: "Banana", value: "banana" },
-    { label: "Blueberry", value: "blueberry" },
-    { label: "Grapes", value: "grapes" },
-    { label: "Pineapple", value: "pineapple" },
+    { label: "Mask Shape", value: null },
+    { label: "Rounded square", value: "Rounded square" },
+    { label: "Squircle", value: "Squircle" },
+    { label: "Circle", value: "Circle" },
+    { label: "Fullbleed", value: "Fullbleed" },
 ]
 
 export default function IconPage() {
@@ -103,14 +102,11 @@ export default function IconPage() {
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectGroup>
-                                <SelectLabel>Fruits</SelectLabel>
-                                {items.map((item) => (
-                                    <SelectItem key={item.value} value={item.value}>
-                                        {item.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectGroup>
+                            {items.map((item) => (
+                                <SelectItem key={item.value} value={item.value}>
+                                    {item.label}
+                                </SelectItem>
+                            ))}
                         </SelectContent>
                     </Select>
                 </div>
