@@ -1,0 +1,84 @@
+{
+  "name": "PWATools - PWA 圖標與資訊清單工具",
+  "short_name": "PWATools",
+  "description": "一站式 PWA 開發工具箱：快速生成自適應 Maskable 圖標、多尺寸 Favicon 與合規 Web App Manifest 資訊清單。",
+  "start_url": "/pwa/",
+  "scope": "/pwa/",
+  "id": "/pwa/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#c6005c",
+  "background_color": "#ffffff",
+  "lang": "zh-TW",
+  "dir": "auto",
+  "icons": [
+    {
+      "src": "/pwa/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-maskable-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "圖標工具",
+      "url": "/pwa/icon",
+      "short_name": "首頁",
+      "description": "快速返回首頁",
+      "icons": [
+        {
+          "src": "/pwa/icon-icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "資訊清單",
+      "url": "/pwa/manifest",
+      "short_name": "捷徑 2",
+      "description": "快捷操作描述",
+      "icons": [
+        {
+          "src": "/pwa/icon-manifest-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/pwa/screenshot-wide.jpeg",
+      "sizes": "1794x889",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "桌面版應用畫面"
+    },
+    {
+      "src": "/pwa/screenshot-narrow.png",
+      "sizes": "398x859",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "行動裝置應用畫面"
+    }
+  ]
+}
